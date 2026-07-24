@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "437866814387",
+    "project_id": "agentra-travel",
+    "storage_bucket": "agentra-travel.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:437866814387:android:c5f1c608c17f7ba379c9c6",
+        "android_client_info": {
+          "package_name": "com.agentra.travel"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDR80xe1nsqdl2ZLPqyYWjDM-bT-yaSXiA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,30 @@
+<application
+    android:label="agentra_frontend"
+    android:usesCleartextTraffic="true"
+    android:name="${applicationName}"
+    android:icon="@mipmap/ic_launcher">
+```
+
+---
+
+## 🚀 **Final Setup - Both Projects:**
+
+### **Your Final Folder Structure:**
+```
+C:\Users\pc\Desktop\
+├── agentra-backend\          ← Backend (Node.js)
+│   ├── server.js
+│   ├── package.json
+│   ├── .env
+│   └── node_modules\
+│
+└── agentra_frontend\         ← Frontend (Flutter)
+    ├── pubspec.yaml
+    ├── lib\
+    │   ├── main.dart
+    │   ├── config\
+    │   ├── models\
+    │   ├── services\
+    │   └── screens\
+    ├── android\
+    └── ios\

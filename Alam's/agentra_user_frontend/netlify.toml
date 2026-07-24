@@ -1,0 +1,8 @@
+# Manual deployment - build locally and deploy the build/web folder
+[build]
+  publish = "build/web"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
