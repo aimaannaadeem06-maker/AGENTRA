@@ -148,34 +148,73 @@ async function chat(req, res) {
       .replace("{excelContext}", excelContext || "No relevant data found.")
       .replace("{packageContext}", packageContext || "No matching packages found.");
 
-    const history = session.messages.slice(-10);
+// Helper function for accurate language detection
+function detectLanguage(message) {
+  const urduScriptPattern = /[\u0600-\u06FF]/;
+  if (urduScriptPattern.test(message)) return "URDU_SCRIPT";
 
-// Detect language from user message
-const urduScriptPattern = /[\u0600-\u06FF]/;
-const romanUrduPattern = /\b(kya|hai|hay|he|mein|main|ko|ki|ka|ke|tha|thi|the|hu|hoon|aap|tum|tu|ham|hum|salam|shukriya|shukria|theek|thik|acha|achcha|ji|jee|han|haan|kese|kaise|kaha|kahin|kyun|kyu|matlab|bhai|jan|jaan|yar|yaar|bilkul|zaroor|zarur|shayad)\b/i;
+  // Distinctive Roman Urdu terms (excluding English collisions like 'the', 'he', 'main', 'jan', 'ka', 'ki', 'ke')
+  const romanUrduTerms = [
+    "kya", "kaise", "kese", "kaha", "kahan", "kyun", "kyu", "matlab",
+    "batao", "bataen", "bataye", "batayen", "chahiye", "chahye",
+    "mujhe", "mjhe", "humein", "humain", "hamain", "apna", "apne", "apni",
+    "hain", "hoga", "hogi", "hoge", "hote", "hoti", "hota",
+    "raha", "rahi", "rahe", "shukriya", "shukria", "meherbani",
+    "karo", "karna", "karni", "karne", "bhai", "jaan", "yaar", "yar",
+    "konsa", "konsi", "konse", "gaye", "gaya", "gayi", "wale", "wali", "wala",
+    "kitna", "kitni", "kitne", "sabse", "sasta", "sasti", "saste",
+    "achha", "achi", "ache", "behtreen", "jagah", "jayein", "jaye", "bhi"
+  ];
 
-const isUrduScript = urduScriptPattern.test(message);
-const isRomanUrdu = romanUrduPattern.test(message);
+  const words = message.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
 
-let languageInstruction = "";
-if (isUrduScript) {
-  languageInstruction = "IMPORTANT: The user is writing in Urdu script. You MUST reply in Urdu script only. Do not use English.";
-} else if (isRomanUrdu) {
-  languageInstruction = "IMPORTANT: The user is writing in Roman Urdu (Urdu using Latin alphabet). You MUST reply in Roman Urdu only. Do not use Urdu script or English.";
-} else {
-  languageInstruction = "IMPORTANT: The user is writing in English. You MUST reply in English only. Do not use Urdu or Hindi.";
+  let romanUrduMatches = 0;
+  for (const word of words) {
+    if (romanUrduTerms.includes(word)) romanUrduMatches++;
+  }
+
+  // Common Roman Urdu phrases
+  const romanUrduPhrasePattern = /\b(kya|kaisa|kese|kahan|konsa|kon sa)\s+(hai|hay|hy|he|hain)\b/i;
+  if (romanUrduPhrasePattern.test(message)) romanUrduMatches += 2;
+
+  // Guard against false positives when English question words are present
+  const englishWords = ["the", "what", "where", "how", "when", "which", "is", "are", "can", "you", "tell", "best", "hotel", "hotels", "place", "places", "food", "restaurant", "restaurants", "main", "park", "tourist", "distance"];
+  let englishMatches = 0;
+  for (const word of words) {
+    if (englishWords.includes(word)) englishMatches++;
+  }
+
+  if (romanUrduMatches > 0 && romanUrduMatches >= englishMatches) {
+    return "ROMAN_URDU";
+  }
+
+  return "ENGLISH";
 }
 
-const conversationParts = [
-  `System: ${filledPrompt}`,
-  `Language Instruction: ${languageInstruction}`,
-  "",
-  ...history.map((m) =>
-    m.role === "user" ? `Human: ${m.content}` : `Assistant: ${m.content}`
-  ),
-  `Human: ${message}`,
-  "Assistant:",
-];
+    const history = session.messages.slice(-10);
+
+    // Detect language from user message accurately
+    const lang = detectLanguage(message);
+    let languageInstruction = "";
+
+    if (lang === "URDU_SCRIPT") {
+      languageInstruction = "CRITICAL LANGUAGE DIRECTIVE: The user wrote their query in Urdu script. You MUST answer exclusively in Urdu script. Do not use English or Roman Urdu.";
+    } else if (lang === "ROMAN_URDU") {
+      languageInstruction = "CRITICAL LANGUAGE DIRECTIVE: The user wrote their query in Roman Urdu (Urdu written with Latin letters). You MUST answer exclusively in Roman Urdu. Do not use English or Urdu script.";
+    } else {
+      languageInstruction = "CRITICAL LANGUAGE DIRECTIVE: The user wrote their query in English. You MUST answer exclusively in standard English. Do NOT answer in Urdu script or Roman Urdu.";
+    }
+
+    const conversationParts = [
+      `System: ${filledPrompt}`,
+      `Language Instruction: ${languageInstruction}`,
+      "",
+      ...history.map((m) =>
+        m.role === "user" ? `Human: ${m.content}` : `Assistant: ${m.content}`
+      ),
+      `Human: ${message}`,
+      "Assistant:",
+    ];
 
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     const completion = await groq.chat.completions.create({
