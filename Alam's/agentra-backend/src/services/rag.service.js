@@ -8,14 +8,12 @@
  *
  * The public API (initVectorStore, retrieveExcelContext) is unchanged so
  * chatbot.controller.js needs no edits.
- */
-
-const XLSX = require("xlsx");
+ */const XLSX = require("xlsx");
 const path = require("path");
 const fs   = require("fs");
 
 // ── In-memory document store ──────────────────────────────────────────────────
-let _docs   = null;   // Array<{ text: string, tokens: Map<string,number> }>
+let _docs   = null;   // Array<{ text: string, file: string, city: string, isFaq: boolean, fileCategory: string, tokens: Map<string,number> }>
 let _idf    = null;   // Map<string, number>
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -23,8 +21,45 @@ let _idf    = null;   // Map<string, number>
 const STOP_WORDS = new Set([
   "the", "a", "an", "in", "on", "of", "to", "is", "are", "was", "were", "be",
   "what", "where", "how", "when", "which", "who", "tell", "me", "about",
-  "list", "down", "any", "some", "for", "with", "and", "or", "from", "at", "by"
+  "list", "down", "any", "some", "for", "with", "and", "or", "from", "at", "by", "show", "give"
 ]);
+
+function cleanValue(val) {
+  if (typeof val !== "string") return val;
+  return val
+    .replace(/ØŒ/g, ", ")
+    .replace(/Ú¯ÙˆØ±Ù.../g, "")
+    .replace(/Ã¢Â€Â“/g, "-")
+    .replace(/Ã/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function rowToText(row, file) {
+  const ignoreKeys = new Set([
+    "lat", "log", "latitude", "longitude", "url", "website_status",
+    "address_1", "city_clean", "source", "intent", "pro", "catag", "__empty", "__empty_1"
+  ]);
+  const parts = [];
+
+  for (const [k, v] of Object.entries(row)) {
+    if (v === null || v === undefined || v === "") continue;
+    const cleanK = k.trim();
+    const lowerK = cleanK.toLowerCase();
+    if (ignoreKeys.has(lowerK)) continue;
+    const cleanV = cleanValue(String(v));
+    if (cleanV) parts.push(`${cleanK}: ${cleanV}`);
+  }
+
+  const lowerFile = file.toLowerCase();
+  if (lowerFile.includes("restaurant") || lowerFile.includes("food")) {
+    parts.push("Category: Restaurant / Food Spot");
+  } else if (lowerFile.includes("hotel")) {
+    parts.push("Category: Hotel / Accommodation");
+  }
+
+  return parts.join("\n");
+}
 
 function tokenize(text) {
   return text
@@ -122,16 +157,30 @@ function loadExcelDocuments() {
 
       let fileChunks = 0;
       const lowerFile = file.toLowerCase();
-      const city = lowerFile.includes("murree") ? "murree" : (lowerFile.includes("lahore") ? "lahore" : "both");
+      const isMurree = lowerFile.includes("murree");
+      const isLahore = lowerFile.includes("lahore");
+      const isFaq = lowerFile.includes("faq");
+
+      let fileCategory = "other";
+      if (lowerFile.includes("restaurant") || lowerFile.includes("food")) fileCategory = "food";
+      else if (lowerFile.includes("hotel")) fileCategory = "hotel";
+      else if (lowerFile.includes("hospital") || lowerFile.includes("medical")) fileCategory = "medical";
+      else if (lowerFile.includes("historical") || lowerFile.includes("tourist")) fileCategory = "attraction";
 
       for (const row of rows) {
-        const content = Object.entries(row)
-          .map(([k, v]) => `${k}: ${v}`)
-          .join("\n");
+        const content = rowToText(row, file);
+        // Skip incomplete or garbage rows where Name is just 'Lahore' or 'Murree'
+        const lowerContent = content.toLowerCase();
+        if (lowerContent.startsWith("name: lahore") && lowerContent.split("\n").length <= 3) {
+          continue;
+        }
+
         if (content.trim()) {
           rawDocs.push({
             file: lowerFile,
-            city,
+            city: isMurree ? "murree" : (isLahore ? "lahore" : "both"),
+            isFaq,
+            fileCategory,
             text: content,
           });
           fileChunks++;
@@ -172,6 +221,8 @@ async function initVectorStore() {
     text: doc.text,
     file: doc.file,
     city: doc.city,
+    isFaq: doc.isFaq,
+    fileCategory: doc.fileCategory,
     tokens: buildTf(tokenize(doc.text)),
   }));
 
@@ -203,31 +254,44 @@ async function retrieveExcelContext(query, k = 10) {
 
   const qLower = query.toLowerCase();
   const qTokens = buildTf(tokenize(query));
+
   const isQueryMurree = qLower.includes("murree");
   const isQueryLahore = qLower.includes("lahore");
 
-  const isFoodQuery = /\b(restaurant|restaurants|food|eat|dining|cafe|cafes|dhaba|karahi|bbq|breakfast|tea)\b/i.test(query);
-  const isHotelQuery = /\b(hotel|hotels|stay|staying|accommodation|lodge|lodging|resort|resorts|motel)\b/i.test(query);
+  const isFoodQuery = /\b(restaurant|restaurants|food|eat|eating|dining|cafe|cafes|dhaba|dhabas|karahi|bbq|dish|dishes|cuisine|spot|spots|eatery|eateries)\b/i.test(query);
+  const isHotelQuery = /\b(hotel|hotels|stay|staying|accommodation|lodge|lodging|resort|resorts|motel|motels|guest|guesthouse|guesthouses|inn|inns)\b/i.test(query);
   const isHospitalQuery = /\b(hospital|hospitals|medical|doctor|doctors|clinic|emergency|health)\b/i.test(query);
-  const isAttractionQuery = /\b(place|places|spot|spots|visit|visiting|attraction|attractions|tourist|sightseeing)\b/i.test(query);
+  const isAttractionQuery = /\b(place|places|spot|spots|visit|visiting|attraction|attractions|tourist|sightseeing|monument|fort|park)\b/i.test(query);
 
   const scored = _docs.map((doc) => {
     let score = cosineSim(qTokens, doc.tokens, _idf);
 
-    // City relevance boost/penalty
+    // City relevance boost & strong cross-city penalty
     if (isQueryMurree) {
       if (doc.city === "murree") score *= 3.0;
-      else if (doc.city === "lahore") score *= 0.1;
+      else if (doc.city === "lahore") score *= 0.01;
     } else if (isQueryLahore) {
       if (doc.city === "lahore") score *= 3.0;
-      else if (doc.city === "murree") score *= 0.1;
+      else if (doc.city === "murree") score *= 0.01;
     }
 
-    // Category file boost
-    if (isFoodQuery && (doc.file.includes("restaurant") || doc.file.includes("food"))) score *= 2.5;
-    if (isHotelQuery && (doc.file.includes("hotel") || doc.file.includes("accommodation"))) score *= 2.5;
-    if (isHospitalQuery && (doc.file.includes("hospital") || doc.file.includes("medical"))) score *= 2.5;
-    if (isAttractionQuery && (doc.file.includes("historical_places") || doc.file.includes("tourist_spots"))) score *= 2.5;
+    // Entity dataset boost over FAQ datasets
+    if (isFoodQuery) {
+      if (doc.fileCategory === "food") score *= 8.0;
+      if (doc.isFaq) score *= 0.1;
+    }
+    if (isHotelQuery) {
+      if (doc.fileCategory === "hotel") score *= 8.0;
+      if (doc.isFaq) score *= 0.1;
+    }
+    if (isHospitalQuery) {
+      if (doc.fileCategory === "medical") score *= 8.0;
+      if (doc.isFaq) score *= 0.1;
+    }
+    if (isAttractionQuery) {
+      if (doc.fileCategory === "attraction") score *= 8.0;
+      if (doc.isFaq) score *= 0.1;
+    }
 
     return {
       text: doc.text,
@@ -237,10 +301,20 @@ async function retrieveExcelContext(query, k = 10) {
 
   scored.sort((a, b) => b.score - a.score);
 
-  return scored
-    .slice(0, k)
-    .map((r) => r.text)
-    .join("\n\n---\n\n");
+  // Deduplicate results
+  const seenTexts = new Set();
+  const uniqueResults = [];
+
+  for (const r of scored) {
+    const cleanSnippet = r.text.toLowerCase().replace(/\s+/g, " ").substring(0, 60);
+    if (!seenTexts.has(cleanSnippet)) {
+      seenTexts.add(cleanSnippet);
+      uniqueResults.push(r.text);
+    }
+    if (uniqueResults.length >= k) break;
+  }
+
+  return uniqueResults.join("\n\n---\n\n");
 }
 
 module.exports = { initVectorStore, retrieveExcelContext };
