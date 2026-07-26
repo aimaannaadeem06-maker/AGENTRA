@@ -152,14 +152,14 @@ app.get('/api/status', (req, res) => {
 // ================= ROUTES =================
 registerRoutes(app);
 
-// Pre-warm the RAG keyword index after DB connects (non-blocking)
-// This runs once so the first chat request is instant.
+// Pre-warm the RAG keyword index on server startup
 (async () => {
   try {
     const { initVectorStore } = require('./src/services/rag.service');
-    await initVectorStore();
+    const result = await initVectorStore();
+    console.log(`🚀 Chatbot RAG initialized: ${result.count} document chunks successfully indexed from dataset files.`);
   } catch (err) {
-    console.warn('⚠️  RAG index warm-up failed (non-fatal):', err.message);
+    console.error('❌ RAG index initialization failed on startup:', err.message);
   }
 })();
 

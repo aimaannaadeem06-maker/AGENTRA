@@ -55,58 +55,105 @@ function cosineSim(tfA, tfB, idf) {
 
 // ── File loading ──────────────────────────────────────────────────────────────
 
-function loadExcelDocuments() {
-  const dataDir = path.join(__dirname, "../data");
-  const texts   = [];
+// ── File loading ──────────────────────────────────────────────────────────────
 
-  if (!fs.existsSync(dataDir)) {
-    console.warn("⚠️  No /data folder found.");
-    return texts;
+function findDataDirectory() {
+  const candidatePaths = [
+    path.resolve(__dirname, "../data"),
+    path.resolve(__dirname, "../../data"),
+    path.resolve(process.cwd(), "src/data"),
+    path.resolve(process.cwd(), "data"),
+    path.resolve(process.cwd(), "Alam's/agentra-backend/src/data"),
+    path.resolve(process.cwd(), "Alam's/agentra-backend/data"),
+  ];
+
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      const files = fs.readdirSync(candidate).filter((f) => {
+        const ext = path.extname(f).toLowerCase();
+        return ext === ".xlsx" || ext === ".xls" || ext === ".csv";
+      });
+      if (files.length > 0) {
+        return { dataDir: candidate, files, searchedPaths: candidatePaths };
+      }
+    }
   }
 
-  const files = fs.readdirSync(dataDir).filter(
-    (f) => f.endsWith(".xlsx") || f.endsWith(".xls") || f.endsWith(".csv")
-  );
+  const defaultDir = path.resolve(__dirname, "../data");
+  return {
+    dataDir: defaultDir,
+    files: fs.existsSync(defaultDir)
+      ? fs.readdirSync(defaultDir).filter((f) => {
+          const ext = path.extname(f).toLowerCase();
+          return ext === ".xlsx" || ext === ".xls" || ext === ".csv";
+        })
+      : [],
+    searchedPaths: candidatePaths,
+  };
+}
+
+function loadExcelDocuments() {
+  const { dataDir, files, searchedPaths } = findDataDirectory();
+  const texts = [];
+
+  if (!fs.existsSync(dataDir) || files.length === 0) {
+    console.error("❌ CRITICAL ERROR [RAG Service]: /data directory or valid dataset files (.csv, .xlsx, .xls) missing!");
+    console.error(`📍 Working Directory (process.cwd()): ${process.cwd()}`);
+    console.error(`📍 Service Directory (__dirname): ${__dirname}`);
+    console.error("📍 Searched Candidate Paths:", searchedPaths || [dataDir]);
+    return { texts: [], fileCount: 0, dataDir };
+  }
+
+  console.log(`📁 Loading RAG datasets from directory: ${dataDir}`);
 
   for (const file of files) {
     const filePath = path.join(dataDir, file);
     let rows = [];
 
-    const workbook = XLSX.readFile(filePath, { type: "file" });
-    for (const sheetName of workbook.SheetNames) {
-      rows = rows.concat(XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]));
-    }
+    try {
+      const workbook = XLSX.readFile(filePath, { type: "file" });
+      for (const sheetName of workbook.SheetNames) {
+        rows = rows.concat(XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]));
+      }
 
-    for (const row of rows) {
-      const content = Object.entries(row)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join("\n");
-      texts.push(content);
+      let fileChunks = 0;
+      for (const row of rows) {
+        const content = Object.entries(row)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join("\n");
+        if (content.trim()) {
+          texts.push(content);
+          fileChunks++;
+        }
+      }
+      console.log(`📄 Loaded ${fileChunks} chunks from: ${file}`);
+    } catch (err) {
+      console.error(`❌ Error parsing file ${file}:`, err.message);
     }
-    console.log(`📄 Loaded: ${file}`);
   }
 
-  return texts;
+  return { texts, fileCount: files.length, dataDir };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Build the in-memory TF-IDF index (called once at startup).
- * Safe to call multiple times — subsequent calls are no-ops.
+ * Safe to call multiple times — subsequent calls return existing status.
  */
 async function initVectorStore() {
-  if (_docs) return;   // already initialised
+  if (_docs) {
+    return { success: true, count: _docs.length, fileCount: 0, alreadyInitialized: true };
+  }
 
   console.log("🔧 Building lightweight keyword index from data files...");
 
-  const texts = loadExcelDocuments();
+  const { texts, fileCount, dataDir } = loadExcelDocuments();
 
   if (texts.length === 0) {
-    _docs = [{ text: "Agentra chatbot ready.", tokens: buildTf(["agentra"]) }];
-    _idf  = new Map([["agentra", 1]]);
-    console.log("⚠️  Keyword index created with placeholder (no data files).");
-    return;
+    const errorMsg = `❌ RAG Initialization Failed: No valid dataset files (.csv, .xlsx, .xls) found or parsed in data directory (${dataDir}).`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
   }
 
   // Tokenise every document
@@ -125,7 +172,9 @@ async function initVectorStore() {
     _idf.set(term, Math.log((N + 1) / (freq + 1)) + 1);
   }
 
-  console.log(`✅ Keyword index ready — ${_docs.length} document chunks indexed.`);
+  const logMessage = `✅ Keyword index ready — ${_docs.length} document chunks indexed from ${fileCount} data files.`;
+  console.log(logMessage);
+  return { success: true, count: _docs.length, fileCount, dataDir };
 }
 
 /**
