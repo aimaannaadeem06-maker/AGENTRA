@@ -20,12 +20,18 @@ let _idf    = null;   // Map<string, number>
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const STOP_WORDS = new Set([
+  "the", "a", "an", "in", "on", "of", "to", "is", "are", "was", "were", "be",
+  "what", "where", "how", "when", "which", "who", "tell", "me", "about",
+  "list", "down", "any", "some", "for", "with", "and", "or", "from", "at", "by"
+]);
+
 function tokenize(text) {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter(Boolean);
+    .filter((t) => t.length > 1 && !STOP_WORDS.has(t));
 }
 
 function buildTf(tokens) {
@@ -52,8 +58,6 @@ function cosineSim(tfA, tfB, idf) {
   if (!normA || !normB) return 0;
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
-
-// ── File loading ──────────────────────────────────────────────────────────────
 
 // ── File loading ──────────────────────────────────────────────────────────────
 
@@ -94,14 +98,14 @@ function findDataDirectory() {
 
 function loadExcelDocuments() {
   const { dataDir, files, searchedPaths } = findDataDirectory();
-  const texts = [];
+  const rawDocs = [];
 
   if (!fs.existsSync(dataDir) || files.length === 0) {
     console.error("❌ CRITICAL ERROR [RAG Service]: /data directory or valid dataset files (.csv, .xlsx, .xls) missing!");
     console.error(`📍 Working Directory (process.cwd()): ${process.cwd()}`);
     console.error(`📍 Service Directory (__dirname): ${__dirname}`);
     console.error("📍 Searched Candidate Paths:", searchedPaths || [dataDir]);
-    return { texts: [], fileCount: 0, dataDir };
+    return { rawDocs: [], fileCount: 0, dataDir };
   }
 
   console.log(`📁 Loading RAG datasets from directory: ${dataDir}`);
@@ -117,12 +121,19 @@ function loadExcelDocuments() {
       }
 
       let fileChunks = 0;
+      const lowerFile = file.toLowerCase();
+      const city = lowerFile.includes("murree") ? "murree" : (lowerFile.includes("lahore") ? "lahore" : "both");
+
       for (const row of rows) {
         const content = Object.entries(row)
           .map(([k, v]) => `${k}: ${v}`)
           .join("\n");
         if (content.trim()) {
-          texts.push(content);
+          rawDocs.push({
+            file: lowerFile,
+            city,
+            text: content,
+          });
           fileChunks++;
         }
       }
@@ -132,7 +143,7 @@ function loadExcelDocuments() {
     }
   }
 
-  return { texts, fileCount: files.length, dataDir };
+  return { rawDocs, fileCount: files.length, dataDir };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -148,16 +159,21 @@ async function initVectorStore() {
 
   console.log("🔧 Building lightweight keyword index from data files...");
 
-  const { texts, fileCount, dataDir } = loadExcelDocuments();
+  const { rawDocs, fileCount, dataDir } = loadExcelDocuments();
 
-  if (texts.length === 0) {
+  if (rawDocs.length === 0) {
     const errorMsg = `❌ RAG Initialization Failed: No valid dataset files (.csv, .xlsx, .xls) found or parsed in data directory (${dataDir}).`;
     console.error(errorMsg);
     throw new Error(errorMsg);
   }
 
   // Tokenise every document
-  _docs = texts.map((text) => ({ text, tokens: buildTf(tokenize(text)) }));
+  _docs = rawDocs.map((doc) => ({
+    text: doc.text,
+    file: doc.file,
+    city: doc.city,
+    tokens: buildTf(tokenize(doc.text)),
+  }));
 
   // Compute IDF across the corpus
   const df  = new Map();
@@ -181,16 +197,43 @@ async function initVectorStore() {
  * Retrieve the top-k most relevant document chunks for a query.
  * Returns a single string (chunks joined by separators).
  */
-async function retrieveExcelContext(query, k = 5) {
+async function retrieveExcelContext(query, k = 10) {
   // Lazy init in case initVectorStore wasn't called at startup
   if (!_docs) await initVectorStore();
 
+  const qLower = query.toLowerCase();
   const qTokens = buildTf(tokenize(query));
+  const isQueryMurree = qLower.includes("murree");
+  const isQueryLahore = qLower.includes("lahore");
 
-  const scored = _docs.map((doc) => ({
-    text:  doc.text,
-    score: cosineSim(qTokens, doc.tokens, _idf),
-  }));
+  const isFoodQuery = /\b(restaurant|restaurants|food|eat|dining|cafe|cafes|dhaba|karahi|bbq|breakfast|tea)\b/i.test(query);
+  const isHotelQuery = /\b(hotel|hotels|stay|staying|accommodation|lodge|lodging|resort|resorts|motel)\b/i.test(query);
+  const isHospitalQuery = /\b(hospital|hospitals|medical|doctor|doctors|clinic|emergency|health)\b/i.test(query);
+  const isAttractionQuery = /\b(place|places|spot|spots|visit|visiting|attraction|attractions|tourist|sightseeing)\b/i.test(query);
+
+  const scored = _docs.map((doc) => {
+    let score = cosineSim(qTokens, doc.tokens, _idf);
+
+    // City relevance boost/penalty
+    if (isQueryMurree) {
+      if (doc.city === "murree") score *= 3.0;
+      else if (doc.city === "lahore") score *= 0.1;
+    } else if (isQueryLahore) {
+      if (doc.city === "lahore") score *= 3.0;
+      else if (doc.city === "murree") score *= 0.1;
+    }
+
+    // Category file boost
+    if (isFoodQuery && (doc.file.includes("restaurant") || doc.file.includes("food"))) score *= 2.5;
+    if (isHotelQuery && (doc.file.includes("hotel") || doc.file.includes("accommodation"))) score *= 2.5;
+    if (isHospitalQuery && (doc.file.includes("hospital") || doc.file.includes("medical"))) score *= 2.5;
+    if (isAttractionQuery && (doc.file.includes("historical_places") || doc.file.includes("tourist_spots"))) score *= 2.5;
+
+    return {
+      text: doc.text,
+      score,
+    };
+  });
 
   scored.sort((a, b) => b.score - a.score);
 

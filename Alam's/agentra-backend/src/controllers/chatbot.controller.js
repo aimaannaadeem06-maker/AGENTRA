@@ -198,21 +198,21 @@ function detectLanguage(message) {
     let languageInstruction = "";
 
     if (lang === "URDU_SCRIPT") {
-      languageInstruction = "CRITICAL LANGUAGE DIRECTIVE: The user wrote their query in Urdu script. You MUST answer exclusively in Urdu script. Do not use English or Roman Urdu.";
+      languageInstruction = "CRITICAL: The user's latest query is in Urdu script. You MUST reply exclusively in Urdu script. Ignore previous language in history.";
     } else if (lang === "ROMAN_URDU") {
-      languageInstruction = "CRITICAL LANGUAGE DIRECTIVE: The user wrote their query in Roman Urdu (Urdu written with Latin letters). You MUST answer exclusively in Roman Urdu. Do not use English or Urdu script.";
+      languageInstruction = "CRITICAL: The user's latest query is in Roman Urdu. You MUST reply exclusively in Roman Urdu (Urdu written in Latin letters). Ignore previous language in history.";
     } else {
-      languageInstruction = "CRITICAL LANGUAGE DIRECTIVE: The user wrote their query in English. You MUST answer exclusively in standard English. Do NOT answer in Urdu script or Roman Urdu.";
+      languageInstruction = "CRITICAL: The user's latest query is in standard English. You MUST reply exclusively in English. Do NOT use Roman Urdu or Urdu script even if previous messages in history were in Urdu.";
     }
 
     const conversationParts = [
       `System: ${filledPrompt}`,
-      `Language Instruction: ${languageInstruction}`,
       "",
       ...history.map((m) =>
         m.role === "user" ? `Human: ${m.content}` : `Assistant: ${m.content}`
       ),
       `Human: ${message}`,
+      `Language Instruction: ${languageInstruction}`,
       "Assistant:",
     ];
 
