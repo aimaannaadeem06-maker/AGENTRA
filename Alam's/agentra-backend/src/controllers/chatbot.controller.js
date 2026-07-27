@@ -65,19 +65,19 @@ LIVE TRAVEL PACKAGES:
 {packageContext}`;
 
 const OUT_OF_SCOPE_TERMS = [
-  "karachi","islamabad","peshawar","quetta","faisalabad","multan",
-  "rawalpindi","dubai","london","paris","new york","india","turkey",
-  "bangkok","europe","america","abroad","international","overseas",
-  "skardu","gilgit","hunza","swat","naran","kaghan","chitral",
+  "karachi", "islamabad", "peshawar", "quetta", "faisalabad", "multan",
+  "rawalpindi", "dubai", "london", "paris", "new york", "india", "turkey",
+  "bangkok", "europe", "america", "abroad", "international", "overseas",
+  "skardu", "gilgit", "hunza", "swat", "naran", "kaghan", "chitral",
 ];
 
 const GENERAL_PHRASES = [
-  "hello","hi","help","what can you","who are you","how are you",
-  "salam","assalam","aoa","kya hal",
+  "hello", "hi", "help", "what can you", "who are you", "how are you",
+  "salam", "assalam", "aoa", "kya hal",
 ];
 
 const PACKAGE_KEYWORDS = [
-  "package","packages","tour","trip","book","deal","offer",
+  "package", "packages", "tour", "trip", "book", "deal", "offer",
 ];
 
 function isOutOfScope(query) {
@@ -150,50 +150,48 @@ async function chat(req, res) {
       .replace("{excelContext}", excelContext || "No relevant data found.")
       .replace("{packageContext}", packageContext || "No matching packages found.");
 
-// Helper function for accurate language detection
-function detectLanguage(message) {
-  const urduScriptPattern = /[\u0600-\u06FF]/;
-  if (urduScriptPattern.test(message)) return "URDU_SCRIPT";
+    // Helper function for accurate language detection
+    function detectLanguage(message) {
+      const urduScriptPattern = /[\u0600-\u06FF]/;
+      if (urduScriptPattern.test(message)) return "URDU_SCRIPT";
 
-  // Distinctive Roman Urdu terms (excluding English collisions like 'the', 'he', 'main', 'jan', 'ka', 'ki', 'ke')
-  const romanUrduTerms = [
-    "kya", "kaise", "kese", "kaha", "kahan", "kyun", "kyu", "matlab",
-    "batao", "bataen", "bataye", "batayen", "chahiye", "chahye",
-    "mujhe", "mjhe", "humein", "humain", "hamain", "apna", "apne", "apni",
-    "hain", "hoga", "hogi", "hoge", "hote", "hoti", "hota",
-    "raha", "rahi", "rahe", "shukriya", "shukria", "meherbani",
-    "karo", "karna", "karni", "karne", "bhai", "jaan", "yaar", "yar",
-    "konsa", "konsi", "konse", "gaye", "gaya", "gayi", "wale", "wali", "wala",
-    "kitna", "kitni", "kitne", "sabse", "sasta", "sasti", "saste",
-    "achha", "achi", "ache", "behtreen", "jagah", "jayein", "jaye", "bhi"
-  ];
+      // Distinctive Roman Urdu terms (excluding English collisions like 'the', 'he', 'main', 'jan', 'ka', 'ki', 'ke')
+      const romanUrduTerms = [
+        "kya", "kaise", "kese", "kaha", "kahan", "kyun", "kyu", "matlab",
+        "batao", "bataen", "bataye", "batayen", "chahiye", "chahye",
+        "mujhe", "mjhe", "humein", "humain", "hamain", "apna", "apne", "apni",
+        "hain", "hoga", "hogi", "hoge", "hote", "hoti", "hota",
+        "raha", "rahi", "rahe", "shukriya", "shukria", "meherbani",
+        "karo", "karna", "karni", "karne", "bhai", "jaan", "yaar", "yar",
+        "konsa", "konsi", "konse", "gaye", "gaya", "gayi", "wale", "wali", "wala",
+        "kitna", "kitni", "kitne", "sabse", "sasta", "sasti", "saste",
+        "achha", "achi", "ache", "behtreen", "jagah", "jayein", "jaye", "bhi"
+      ];
 
-  const words = message.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+      const words = message.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
 
-  let romanUrduMatches = 0;
-  for (const word of words) {
-    if (romanUrduTerms.includes(word)) romanUrduMatches++;
-  }
+      let romanUrduMatches = 0;
+      for (const word of words) {
+        if (romanUrduTerms.includes(word)) romanUrduMatches++;
+      }
 
-  // Common Roman Urdu phrases
-  const romanUrduPhrasePattern = /\b(kya|kaisa|kese|kahan|konsa|kon sa)\s+(hai|hay|hy|he|hain)\b/i;
-  if (romanUrduPhrasePattern.test(message)) romanUrduMatches += 2;
+      // Common Roman Urdu phrases
+      const romanUrduPhrasePattern = /\b(kya|kaisa|kese|kahan|konsa|kon sa)\s+(hai|hay|hy|he|hain)\b/i;
+      if (romanUrduPhrasePattern.test(message)) romanUrduMatches += 2;
 
-  // Guard against false positives when English question words are present
-  const englishWords = ["the", "what", "where", "how", "when", "which", "is", "are", "can", "you", "tell", "best", "hotel", "hotels", "place", "places", "food", "restaurant", "restaurants", "main", "park", "tourist", "distance"];
-  let englishMatches = 0;
-  for (const word of words) {
-    if (englishWords.includes(word)) englishMatches++;
-  }
+      // Guard against false positives when English question words are present
+      const englishWords = ["the", "what", "where", "how", "when", "which", "is", "are", "can", "you", "tell", "best", "hotel", "hotels", "place", "places", "food", "restaurant", "restaurants", "main", "park", "tourist", "distance"];
+      let englishMatches = 0;
+      for (const word of words) {
+        if (englishWords.includes(word)) englishMatches++;
+      }
 
-  if (romanUrduMatches > 0 && romanUrduMatches >= englishMatches) {
-    return "ROMAN_URDU";
-  }
+      if (romanUrduMatches > 0 && romanUrduMatches >= englishMatches) {
+        return "ROMAN_URDU";
+      }
 
-  return "ENGLISH";
-}
-
-    const history = session.messages.slice(-10);
+      return "ENGLISH";
+    }
 
     // Detect language from user message accurately
     const lang = detectLanguage(message);
@@ -220,7 +218,7 @@ function detectLanguage(message) {
 
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     const completion = await groq.chat.completions.create({
-      model:  "llama-3.3-70b-versatile",
+      model: "llama-3.3-70b-versatile",
       messages: [{ role: "user", content: conversationParts.join("\n") }],
       temperature: 0.7,
     });
