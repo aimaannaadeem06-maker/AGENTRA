@@ -13,52 +13,16 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-const SYSTEM_PROMPT = `You are Alex, a friendly and knowledgeable human assistant for the Agentra travel app. You talk naturally, like a real person would in a chat – not like a robot or a formal helpdesk system.
+const SYSTEM_PROMPT = `You are Alex, a friendly, accurate, and helpful travel assistant for the Agentra travel app.
 
-Your personality:
-- Warm, calm, and approachable
-- Confident but never arrogant
-- Occasionally uses casual, natural phrases like "sure thing", "good question", "absolutely", "no worries", "got it" – but don't overdo it
-- Keeps responses concise and to the point, like a real person texting or chatting
-- Never sounds scripted, stiff, or overly formal
-- Never says things like "As an AI language model..." or "I am here to assist you today"
+CRITICAL GROUNDING RULES (100% STRICT RAG COMPLIANCE):
+1. You MUST answer user questions ONLY using the exact facts, places, hotels, restaurants, phone numbers, and details provided in the KNOWLEDGE BASE section below.
+2. DO NOT use outside knowledge, web information, or unmentioned facts under any circumstances.
+3. If the requested information, place, or detail is NOT present in the KNOWLEDGE BASE below, you MUST reply with a polite message such as: "I don't have information on that in my current database. Would you like to know about available restaurants, hotels, or spots in Murree or Lahore?"
+4. NEVER invent or assume prices, phone numbers, addresses, or details that are not in the KNOWLEDGE BASE.
+5. You ONLY cover Murree and Lahore (cities in Pakistan). If asked about any other city or country, state clearly that you only cover Murree and Lahore.
 
-Conversational behavior:
-1. GREETINGS: Reply warmly and naturally. Example: "Hey! Good to hear from you. What can I help you with?" – then wait for their question.
-2. THANKS: Respond like a real person. Example: "Happy to help!", "Anytime!", "Glad that helped!"
-3. FAREWELLS: Keep it natural. Example: "Take care!", "Talk soon!", "Catch you later!"
-4. IF SOMEONE ASKS IF YOU ARE AN AI OR HUMAN: You can say you're a virtual assistant named Alex, but do not claim to be a real human. Be honest but keep it brief and move on.
-5. COMBINED MESSAGES (greeting + question): Give a quick casual acknowledgment, then answer the question directly.
-
-Answer behavior (this must not change):
-- All your answers must come strictly from the knowledge base provided to you
-- Do not make up information or answer from outside the knowledge base
-- If the answer is not in the knowledge base, say something natural like: "Hmm, I don't have info on that one – is there something else I can help you with?"
-
-Tone in answers:
-- Write like you are explaining something to a friend, not reading from a manual
-- Use short paragraphs or natural line breaks – avoid walls of text
-- Avoid bullet points unless the information genuinely needs a list
-- If something is complex, break it down simply without being condescending
-
-STRICT RULES — never break these:
-1. You ONLY answer questions about Murree and Lahore (cities in Pakistan).
-2. If asked about any other city or country, ONLY say you cover Murree and Lahore. Do NOT suggest alternatives.
-3. LANGUAGE RULES:
-   - Match the user's language and script style exactly.
-   - If user writes in English -> reply in English.
-   - If user writes in Urdu script -> reply in Urdu script.
-   - If user writes in Roman Urdu (Urdu in Latin script) -> reply in Roman Urdu.
-   - NEVER use Hindi words like "Namaste", "Dhanyawad".
-   - NEVER mix English and Urdu in the same response.
-   - Default language is ENGLISH.
-4. When showing packages, mention title, price, duration, and highlights.
-5. NEVER invent or make up packages, hotels, or places.
-6. Only show real packages from LIVE TRAVEL PACKAGES section below.
-7. If no packages found, say "I currently have limited packages, please check back soon."
-8. When listing hotels or places, format each one clearly. Never repeat same phone/address.
-9. NEVER introduce yourself as only a Lahore or only a Murree assistant. You always cover BOTH cities equally.
-KNOWLEDGE BASE (Hotels, Parking, Historical Places):
+KNOWLEDGE BASE (Authoritative Data from Datasets):
 {excelContext}
 
 LIVE TRAVEL PACKAGES:
@@ -100,6 +64,40 @@ function getSession(sessionId) {
   const session = sessionStore.get(sessionId);
   session.lastActive = Date.now();
   return session;
+}
+
+function detectLanguage(message) {
+  const urduScriptPattern = /[\u0600-\u06FF]/;
+  if (urduScriptPattern.test(message)) return "URDU_SCRIPT";
+
+  const romanUrduTerms = new Set([
+    "kya", "kaise", "kese", "kaha", "kahan", "kyun", "kyu", "matlab",
+    "batao", "bataen", "bataye", "batayen", "chahiye", "chahye",
+    "mujhe", "mjhe", "humein", "humain", "hamain", "apna", "apne", "apni",
+    "hain", "hoga", "hogi", "hoge", "hote", "hoti", "hota",
+    "raha", "rahi", "rahe", "shukriya", "shukria", "meherbani",
+    "karo", "karna", "karni", "karne", "bhai", "jaan", "yaar", "yar",
+    "konsa", "konsi", "konse", "gaye", "gaya", "gayi", "wale", "wali", "wala",
+    "kitna", "kitni", "kitne", "sabse", "sasta", "sasti", "saste",
+    "achha", "achi", "ache", "behtreen", "jagah", "jayein", "jaye"
+  ]);
+
+  const words = message.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+
+  let romanUrduMatches = 0;
+  for (const word of words) {
+    if (romanUrduTerms.has(word)) romanUrduMatches++;
+  }
+
+  const romanUrduPhrasePattern = /\b(kya|kaisa|kese|kahan|konsa|kon sa|mujhe|batao|kaun|kaise)\s+(hai|hay|hy|he|hain|bhi|hoon|ho)\b/i;
+  if (romanUrduPhrasePattern.test(message)) romanUrduMatches += 2;
+
+  // If there are distinctive Roman Urdu words or phrases, return ROMAN_URDU; otherwise default strictly to ENGLISH!
+  if (romanUrduMatches >= 2) {
+    return "ROMAN_URDU";
+  }
+
+  return "ENGLISH";
 }
 
 async function initializeRAG(req, res) {
@@ -150,77 +148,37 @@ async function chat(req, res) {
       .replace("{excelContext}", excelContext || "No relevant data found.")
       .replace("{packageContext}", packageContext || "No matching packages found.");
 
-    // Helper function for accurate language detection
-    function detectLanguage(message) {
-      const urduScriptPattern = /[\u0600-\u06FF]/;
-      if (urduScriptPattern.test(message)) return "URDU_SCRIPT";
-
-      // Distinctive Roman Urdu terms (excluding English collisions like 'the', 'he', 'main', 'jan', 'ka', 'ki', 'ke')
-      const romanUrduTerms = [
-        "kya", "kaise", "kese", "kaha", "kahan", "kyun", "kyu", "matlab",
-        "batao", "bataen", "bataye", "batayen", "chahiye", "chahye",
-        "mujhe", "mjhe", "humein", "humain", "hamain", "apna", "apne", "apni",
-        "hain", "hoga", "hogi", "hoge", "hote", "hoti", "hota",
-        "raha", "rahi", "rahe", "shukriya", "shukria", "meherbani",
-        "karo", "karna", "karni", "karne", "bhai", "jaan", "yaar", "yar",
-        "konsa", "konsi", "konse", "gaye", "gaya", "gayi", "wale", "wali", "wala",
-        "kitna", "kitni", "kitne", "sabse", "sasta", "sasti", "saste",
-        "achha", "achi", "ache", "behtreen", "jagah", "jayein", "jaye", "bhi"
-      ];
-
-      const words = message.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
-
-      let romanUrduMatches = 0;
-      for (const word of words) {
-        if (romanUrduTerms.includes(word)) romanUrduMatches++;
-      }
-
-      // Common Roman Urdu phrases
-      const romanUrduPhrasePattern = /\b(kya|kaisa|kese|kahan|konsa|kon sa)\s+(hai|hay|hy|he|hain)\b/i;
-      if (romanUrduPhrasePattern.test(message)) romanUrduMatches += 2;
-
-      // Guard against false positives when English question words are present
-      const englishWords = ["the", "what", "where", "how", "when", "which", "is", "are", "can", "you", "tell", "best", "hotel", "hotels", "place", "places", "food", "restaurant", "restaurants", "main", "park", "tourist", "distance"];
-      let englishMatches = 0;
-      for (const word of words) {
-        if (englishWords.includes(word)) englishMatches++;
-      }
-
-      if (romanUrduMatches > 0 && romanUrduMatches >= englishMatches) {
-        return "ROMAN_URDU";
-      }
-
-      return "ENGLISH";
-    }
-
-    // Detect language from user message accurately
     const lang = detectLanguage(message);
     let languageInstruction = "";
 
     if (lang === "URDU_SCRIPT") {
-      languageInstruction = "CRITICAL: The user's latest query is in Urdu script. You MUST reply exclusively in Urdu script. Ignore previous language in history.";
+      languageInstruction = "CRITICAL: The user's query is in Urdu script. You MUST reply exclusively in Urdu script.";
     } else if (lang === "ROMAN_URDU") {
-      languageInstruction = "CRITICAL: The user's latest query is in Roman Urdu. You MUST reply exclusively in Roman Urdu (Urdu written in Latin letters). Ignore previous language in history.";
+      languageInstruction = "CRITICAL: The user's query is in Roman Urdu. You MUST reply exclusively in Roman Urdu (Urdu written in Latin letters).";
     } else {
-      languageInstruction = "CRITICAL: The user's latest query is in standard English. You MUST reply exclusively in English. Do NOT use Roman Urdu or Urdu script even if previous messages in history were in Urdu.";
+      languageInstruction = "CRITICAL: The user's query is in standard English. You MUST reply exclusively in standard English. Do NOT use Roman Urdu or Urdu script.";
     }
 
-    const conversationParts = [
-      `System: ${filledPrompt}`,
-      "",
-      ...history.map((m) =>
-        m.role === "user" ? `Human: ${m.content}` : `Assistant: ${m.content}`
-      ),
-      `Human: ${message}`,
-      `Language Instruction: ${languageInstruction}`,
-      "Assistant:",
+    const apiMessages = [
+      {
+        role: "system",
+        content: `${filledPrompt}\n\n====================\nLANGUAGE DIRECTIVE: ${languageInstruction}\n====================`
+      },
+      ...history.map((m) => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.content
+      })),
+      {
+        role: "user",
+        content: `${message}\n\n[INSTRUCTION: Answer strictly using facts from KNOWLEDGE BASE. Reply in ${lang === "ROMAN_URDU" ? "Roman Urdu" : lang === "URDU_SCRIPT" ? "Urdu script" : "English"}]`
+      }
     ];
 
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     const completion = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: conversationParts.join("\n") }],
-      temperature: 0.7,
+      messages: apiMessages,
+      temperature: 0.1, // Factual generation, zero hallucination
     });
 
     const reply = completion.choices[0]?.message?.content?.trim() || "Sorry, I could not generate a response.";
@@ -238,4 +196,4 @@ async function chat(req, res) {
   }
 }
 
-module.exports = { chat, initializeRAG };
+module.exports = { chat, initializeRAG, detectLanguage };
