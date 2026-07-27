@@ -5,10 +5,16 @@ const { registerRoutes } = require('../src/register-routes');
 
 const app = express();
 
-app.use(cors());
+app.use(cors({
+    origin: function (origin, callback) {
+        callback(null, true);
+    },
+    credentials: true,
+}));
 app.use(express.json());
 
 const MONGO_URI = (process.env.MONGO_URI || process.env.MONGODB_URI || '').trim().replace(/^["']|["']$/g, '');
+const MONGO_URI_FALLBACK = 'mongodb://n8nuser:n8npass123@ac-80xwjau-shard-00-00.7b3wkfw.mongodb.net:27017,ac-80xwjau-shard-00-01.7b3wkfw.mongodb.net:27017,ac-80xwjau-shard-00-02.7b3wkfw.mongodb.net:27017/agentra?ssl=true&replicaSet=atlas-gf3dvo-shard-0&authSource=admin&appName=Cluster0';
 
 let cachedDb = null;
 
@@ -17,12 +23,9 @@ const connectDB = async () => {
         return cachedDb;
     }
 
-    if (!MONGO_URI) {
-        throw new Error('MONGO_URI environment variable is not defined');
-    }
-
     try {
-        const db = await mongoose.connect(MONGO_URI, {
+        const uri = MONGO_URI || MONGO_URI_FALLBACK;
+        const db = await mongoose.connect(uri, {
             serverSelectionTimeoutMS: 5000,
             socketTimeoutMS: 45000,
             dbName: 'agentra'
@@ -32,7 +35,19 @@ const connectDB = async () => {
         return db;
     } catch (err) {
         console.error('MongoDB Connection Failed:', err.message);
-        throw err;
+        try {
+            const fallbackDb = await mongoose.connect(MONGO_URI_FALLBACK, {
+                serverSelectionTimeoutMS: 5000,
+                socketTimeoutMS: 45000,
+                dbName: 'agentra'
+            });
+            cachedDb = fallbackDb;
+            console.log('MongoDB Connected via fallback URI');
+            return fallbackDb;
+        } catch (fallbackErr) {
+            console.error('MongoDB Fallback Connection Failed:', fallbackErr.message);
+            throw fallbackErr;
+        }
     }
 };
 
@@ -50,12 +65,41 @@ app.use(async (req, res, next) => {
     }
 });
 
-app.get('/', (req, res) => {
+// Middleware to pre-warm RAG service on serverless request
+let ragInitialized = false;
+app.use(async (req, res, next) => {
+    if (!ragInitialized) {
+        try {
+            const { initVectorStore } = require('../src/services/rag.service');
+            await initVectorStore();
+            ragInitialized = true;
+        } catch (err) {
+            console.error('RAG init warning on Vercel:', err.message);
+        }
+    }
+    next();
+});
+
+// Root & Health Check routes
+app.get(['/', '/health', '/api/health'], (req, res) => {
     res.json({
+        success: true,
+        status: 'healthy',
         message: 'Agentra API Server',
         version: '1.0.0',
+        environment: process.env.NODE_ENV || 'production',
+        mongodb: mongoose.connection.readyState === 1 ? '✅ Connected' : '❌ Disconnected'
+    });
+});
+
+app.get('/api/status', (req, res) => {
+    res.json({
+        success: true,
+        api: 'Agentra Travel Management System',
+        version: '1.0.0',
         status: 'running',
-        dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        timestamp: new Date().toISOString()
     });
 });
 
