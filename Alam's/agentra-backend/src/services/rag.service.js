@@ -111,13 +111,13 @@ function rowToText(row, file) {
 
   const lowerFile = file.toLowerCase();
   if (lowerFile.includes("restaurant") || lowerFile.includes("food")) {
-    parts.push("Category: Restaurant / Food Spot");
+    parts.push("Category: Restaurant / Food Spot / Food Spots / Dining Place / Eateries / Street Food Spots");
   } else if (lowerFile.includes("hotel")) {
-    parts.push("Category: Hotel / Accommodation");
+    parts.push("Category: Hotel / Accommodation / Hotels / Hostels / Stays / Lodging");
   } else if (lowerFile.includes("hospital") || lowerFile.includes("medical")) {
-    parts.push("Category: Medical / Hospital");
+    parts.push("Category: Medical / Hospital / Hospitals / Clinics / Emergency");
   } else if (lowerFile.includes("tourist") || lowerFile.includes("historical")) {
-    parts.push("Category: Tourist Attraction / Historical Place");
+    parts.push("Category: Tourist Attraction / Historical Place / Places to visit / Tourist Spots");
   }
 
   return parts.join("\n");
@@ -342,22 +342,22 @@ async function retrieveExcelContext(query, k = 10, historyContext = "") {
       else if (doc.city === "murree") score *= 0.05;
     }
 
-    // Category boost over FAQ datasets
+    // Category boost over FAQ datasets (heavy penalty on FAQs so entity datasets always rank #1)
     if (isFoodQuery) {
-      if (doc.fileCategory === "food") score *= 10.0;
-      if (doc.isFaq) score *= 0.2;
+      if (doc.fileCategory === "food") score *= 50.0;
+      if (doc.isFaq) score *= 0.001;
     }
     if (isHotelQuery) {
-      if (doc.fileCategory === "hotel") score *= 10.0;
-      if (doc.isFaq) score *= 0.2;
+      if (doc.fileCategory === "hotel") score *= 50.0;
+      if (doc.isFaq) score *= 0.001;
     }
     if (isHospitalQuery) {
-      if (doc.fileCategory === "medical") score *= 10.0;
-      if (doc.isFaq) score *= 0.2;
+      if (doc.fileCategory === "medical") score *= 50.0;
+      if (doc.isFaq) score *= 0.001;
     }
     if (isAttractionQuery) {
-      if (doc.fileCategory === "attraction") score *= 10.0;
-      if (doc.isFaq) score *= 0.2;
+      if (doc.fileCategory === "attraction") score *= 50.0;
+      if (doc.isFaq) score *= 0.001;
     }
 
     return {
