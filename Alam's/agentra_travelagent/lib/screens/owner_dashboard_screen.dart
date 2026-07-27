@@ -19,31 +19,46 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
   Map<String, dynamic> _dashboardData = {};
   bool _isLoading = true;
 
+  num _toNum(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value;
+    if (value is String) return num.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  String _getInitial(dynamic fullName, dynamic bizName) {
+    final str1 = (fullName ?? '').toString().trim();
+    if (str1.isNotEmpty) return str1[0].toUpperCase();
+    final str2 = (bizName ?? '').toString().trim();
+    if (str2.isNotEmpty) return str2[0].toUpperCase();
+    return 'A';
+  }
+
   List<Map<String, dynamic>> _getMonthlyStats() {
     return [
       {
         'label': 'Total Users',
-        'value': _dashboardData['totalUsers'] ?? 0,
+        'value': _toNum(_dashboardData['totalUsers']),
         'color': Colors.indigo,
       },
       {
         'label': 'Total Agents',
-        'value': _dashboardData['totalAgents'] ?? 0,
+        'value': _toNum(_dashboardData['totalAgents']),
         'color': AppColors.primary,
       },
       {
         'label': 'Total Bookings',
-        'value': _dashboardData['totalBookings'] ?? 0,
+        'value': _toNum(_dashboardData['totalBookings']),
         'color': Colors.blue,
       },
       {
         'label': 'Pending Refunds',
-        'value': _dashboardData['pendingRefunds'] ?? 0,
+        'value': _toNum(_dashboardData['pendingRefunds']),
         'color': Colors.orange,
       },
       {
         'label': 'Total Complaints',
-        'value': _dashboardData['totalComplaints'] ?? 0,
+        'value': _toNum(_dashboardData['totalComplaints']),
         'color': Colors.red,
       },
     ];
@@ -64,24 +79,24 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
       {
         'label': 'Commission Earned',
         'value':
-            'PKR ${((summary['totalCommissionRevenue'] ?? 0) as num).toStringAsFixed(0)}',
+            'PKR ${_toNum(summary['totalCommissionRevenue']).toStringAsFixed(0)}',
         'color': Colors.indigo,
       },
       {
         'label': 'Today\'s Commission',
         'value':
-            'PKR ${((summary['todayCommissionRevenue'] ?? 0) as num).toStringAsFixed(0)}',
+            'PKR ${_toNum(summary['todayCommissionRevenue']).toStringAsFixed(0)}',
         'color': Colors.green,
       },
       {
         'label': 'Successful Bookings',
-        'value': summary['totalSuccessfulBookings'] ?? 0,
+        'value': _toNum(summary['totalSuccessfulBookings']),
         'color': Colors.blue,
       },
       {
         'label': 'Refunded Commission',
         'value':
-            'PKR ${((summary['totalRefundedCommission'] ?? 0) as num).toStringAsFixed(0)}',
+            'PKR ${_toNum(summary['totalRefundedCommission']).toStringAsFixed(0)}',
         'color': Colors.orange,
       },
     ];
@@ -94,15 +109,23 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
   }
 
   Future<void> _loadData() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
-    final agents = await OwnerService.getAllAgents();
-    final dashboard = await OwnerService.getOwnerDashboard();
-    if (mounted) {
-      setState(() {
-        _agents = agents;
-        _dashboardData = dashboard;
-        _isLoading = false;
-      });
+    try {
+      final agents = await OwnerService.getAllAgents();
+      final dashboard = await OwnerService.getOwnerDashboard();
+      if (mounted) {
+        setState(() {
+          _agents = agents;
+          _dashboardData = dashboard;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Owner dashboard load error: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -384,8 +407,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
             child: (agent['profileImage'] == null ||
                     agent['profileImage'].toString().isEmpty)
                 ? Text(
-                    (agent['fullName'] ?? agent['businessName'] ?? 'A')[0]
-                        .toUpperCase(),
+                    _getInitial(agent['fullName'], agent['businessName']),
                     style: const TextStyle(
                       color: AppColors.primary,
                       fontWeight: FontWeight.w800,
@@ -457,13 +479,19 @@ class _AgentDetailDialog extends StatelessWidget {
   final Map<String, dynamic> agent;
   const _AgentDetailDialog({required this.agent});
 
+  num _toNum(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value;
+    if (value is String) return num.tryParse(value) ?? 0;
+    return 0;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final revenue = (agent['revenue'] ?? 0) as num;
-    final bookings =
-        (agent['bookingCount'] ?? agent['totalBookings'] ?? 0) as num;
-    final packages = (agent['totalPackages'] ?? 0) as num;
-    final rating = (agent['averageRating'] ?? 0) as num;
+    final revenue = _toNum(agent['revenue']);
+    final bookings = _toNum(agent['bookingCount'] ?? agent['totalBookings']);
+    final packages = _toNum(agent['totalPackages']);
+    final rating = _toNum(agent['averageRating']);
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
@@ -630,11 +658,10 @@ class _AgentDetailDialog extends StatelessWidget {
   }
 
   Future<void> _downloadReport(BuildContext context) async {
-    final revenue = (agent['revenue'] ?? 0) as num;
-    final bookings =
-        (agent['bookingCount'] ?? agent['totalBookings'] ?? 0) as num;
-    final packages = (agent['totalPackages'] ?? 0) as num;
-    final rating = (agent['averageRating'] ?? 0) as num;
+    final revenue = _toNum(agent['revenue']);
+    final bookings = _toNum(agent['bookingCount'] ?? agent['totalBookings']);
+    final packages = _toNum(agent['totalPackages']);
+    final rating = _toNum(agent['averageRating']);
     final now = DateTime.now();
     final dateStr =
         '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}  '

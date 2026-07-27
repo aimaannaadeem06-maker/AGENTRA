@@ -22,14 +22,28 @@ class _OwnerAgentVerificationScreenState
     _loadAgents();
   }
 
+  String _getInitial(dynamic name) {
+    final str = (name ?? '').toString().trim();
+    if (str.isNotEmpty) return str[0].toUpperCase();
+    return 'A';
+  }
+
   Future<void> _loadAgents() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
-    final agents = await OwnerService.getUnverifiedAgents();
-    if (mounted) {
-      setState(() {
-        _agents = agents;
-        _isLoading = false;
-      });
+    try {
+      final agents = await OwnerService.getUnverifiedAgents();
+      if (mounted) {
+        setState(() {
+          _agents = agents;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Load unverified agents error: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -217,9 +231,7 @@ class _OwnerAgentVerificationScreenState
                                                 .primary
                                                 .withOpacity(0.1),
                                             child: Text(
-                                              (agent['businessName'] ??
-                                                      'A')[0]
-                                                  .toUpperCase(),
+                                              _getInitial(agent['businessName']),
                                               style: const TextStyle(
                                                 color: AppColors.primary,
                                                 fontWeight:

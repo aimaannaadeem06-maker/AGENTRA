@@ -29,14 +29,30 @@ class _OwnerManageAccountsScreenState extends State<OwnerManageAccountsScreen> {
     super.dispose();
   }
 
+  String _getInitial(dynamic fullName, dynamic bizName) {
+    final str1 = (fullName ?? '').toString().trim();
+    if (str1.isNotEmpty) return str1[0].toUpperCase();
+    final str2 = (bizName ?? '').toString().trim();
+    if (str2.isNotEmpty) return str2[0].toUpperCase();
+    return 'A';
+  }
+
   Future<void> _loadAgents() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
-    final agents = await OwnerService.getAllAgents();
-    if (mounted) {
-      setState(() {
-        _agents = agents;
-        _isLoading = false;
-      });
+    try {
+      final agents = await OwnerService.getAllAgents();
+      if (mounted) {
+        setState(() {
+          _agents = agents;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Load agents error: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -626,8 +642,7 @@ class _OwnerManageAccountsScreenState extends State<OwnerManageAccountsScreen> {
                   radius: 26,
                   backgroundColor: AppColors.primary.withOpacity(0.1),
                   child: Text(
-                    (agent['fullName'] ?? agent['businessName'] ?? 'A')[0]
-                        .toUpperCase(),
+                    _getInitial(agent['fullName'], agent['businessName']),
                     style: const TextStyle(
                         color: AppColors.primary,
                         fontWeight: FontWeight.w800,
