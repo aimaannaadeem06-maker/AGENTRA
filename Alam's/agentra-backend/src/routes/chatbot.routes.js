@@ -1,8 +1,8 @@
-// routes/chatbot.route.js
+// routes/chatbot.routes.js
 const express = require("express");
 const router = express.Router();
 const { chat, initializeRAG } = require("../controllers/chatbot.controller");
-// ADD THIS TEST ROUTE
+
 router.get("/test-packages", async (req, res) => {
   const Package = require("../models/Package");
   const packages = await Package.find({ location: /murree/i }).limit(5).lean();
@@ -10,6 +10,7 @@ router.get("/test-packages", async (req, res) => {
 });
 
 router.post("/init", initializeRAG); // Manually re-trigger RAG init if needed
-router.post("/chat", chat);          // Main chat endpoint
+router.post("/chat", chat);          // Main chat endpoint (/api/chatbot/chat)
+router.post("/message", chat);       // Alias for mobile app compatibility (/api/chatbot/message)
 
 module.exports = router;
