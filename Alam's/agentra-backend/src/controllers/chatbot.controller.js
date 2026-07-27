@@ -131,15 +131,17 @@ async function chat(req, res) {
     }
 
     const session = getSession(sid);
+    const history = session.messages.slice(-6);
+    const historyText = history.map((m) => m.content).join(" ");
 
     // Only fetch packages if user asks AND mentions Murree or Lahore
-    const mentionsMurree = message.toLowerCase().includes("murree");
-    const mentionsLahore = message.toLowerCase().includes("lahore");
+    const mentionsMurree = message.toLowerCase().includes("murree") || historyText.toLowerCase().includes("murree");
+    const mentionsLahore = message.toLowerCase().includes("lahore") || historyText.toLowerCase().includes("lahore");
     const mentionsAllowedCity = mentionsMurree || mentionsLahore;
     const shouldFetchPackages = isPackageQuery(message) && mentionsAllowedCity;
 
     const [excelContext, packageContext, displayPackages] = await Promise.all([
-      retrieveExcelContext(message),
+      retrieveExcelContext(message, 10, historyText),
       shouldFetchPackages ? fetchRelevantPackages(message) : Promise.resolve(null),
       shouldFetchPackages ? fetchPackagesForDisplay(message) : Promise.resolve([]),
     ]);

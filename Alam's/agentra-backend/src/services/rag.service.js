@@ -1,14 +1,11 @@
 /**
- * rag.service.js — lightweight keyword-based RAG (no ONNX / no heavy ML model).
+ * rag.service.js — enhanced keyword & intent-based RAG for Agentra Travel App.
  *
- * Why: The HuggingFace Transformers embedding model (Xenova/all-MiniLM-L6-v2)
- * requires ~735 MB of RAM and crashes the server on low-memory machines.
- * We replace it with a simple TF-IDF cosine-similarity search that is
- * functionally equivalent for short CSV/Excel rows and uses < 5 MB of RAM.
- *
- * The public API (initVectorStore, retrieveExcelContext) is unchanged so
- * chatbot.controller.js needs no edits.
- */const XLSX = require("xlsx");
+ * Provides robust dataset retrieval for restaurants, food spots, hotels, hostels,
+ * hospitals, and tourist attractions across Lahore and Murree with synonym normalization,
+ * stemming, intent fallbacks, and city context awareness.
+ */
+const XLSX = require("xlsx");
 const path = require("path");
 const fs   = require("fs");
 
@@ -21,8 +18,69 @@ let _idf    = null;   // Map<string, number>
 const STOP_WORDS = new Set([
   "the", "a", "an", "in", "on", "of", "to", "is", "are", "was", "were", "be",
   "what", "where", "how", "when", "which", "who", "tell", "me", "about",
-  "list", "down", "any", "some", "for", "with", "and", "or", "from", "at", "by", "show", "give"
+  "list", "down", "any", "some", "for", "with", "and", "or", "from", "at", "by", "show", "give",
+  "can", "you", "please", "find", "suggest", "good", "best", "top", "nice", "popular"
 ]);
+
+// Synonym & Stemming Dictionary
+const SYNONYM_MAP = {
+  // Food & Restaurants
+  "restaurant": ["restaurant", "food"],
+  "restaurants": ["restaurant", "food"],
+  "resturant": ["restaurant", "food"],
+  "resturants": ["restaurant", "food"],
+  "restorant": ["restaurant", "food"],
+  "food": ["restaurant", "food"],
+  "foods": ["restaurant", "food"],
+  "eat": ["restaurant", "food"],
+  "eatery": ["restaurant", "food"],
+  "eateries": ["restaurant", "food"],
+  "cafe": ["restaurant", "food"],
+  "cafes": ["restaurant", "food"],
+  "dhaba": ["restaurant", "food"],
+  "dhabas": ["restaurant", "food"],
+  "dining": ["restaurant", "food"],
+  "spot": ["spot", "attraction"],
+  "spots": ["spot", "attraction"],
+
+  // Hotels & Accommodation / Hostels
+  "hotel": ["hotel", "stay"],
+  "hotels": ["hotel", "stay"],
+  "hostel": ["hotel", "stay"],
+  "hostels": ["hotel", "stay"],
+  "guesthouse": ["hotel", "stay"],
+  "guesthouses": ["hotel", "stay"],
+  "guest": ["hotel", "stay"],
+  "stay": ["hotel", "stay"],
+  "stays": ["hotel", "stay"],
+  "lodging": ["hotel", "stay"],
+  "lodge": ["hotel", "stay"],
+  "resort": ["hotel", "stay"],
+  "resorts": ["hotel", "stay"],
+  "inn": ["hotel", "stay"],
+  "inns": ["hotel", "stay"],
+  "motel": ["hotel", "stay"],
+
+  // Medical / Hospitals
+  "hospital": ["hospital", "medical"],
+  "hospitals": ["hospital", "medical"],
+  "medical": ["hospital", "medical"],
+  "clinic": ["hospital", "medical"],
+  "clinics": ["hospital", "medical"],
+  "doctor": ["hospital", "medical"],
+  "doctors": ["hospital", "medical"],
+  "emergency": ["hospital", "medical"],
+
+  // Attractions & Places
+  "place": ["place", "attraction"],
+  "places": ["place", "attraction"],
+  "attraction": ["attraction", "place"],
+  "attractions": ["attraction", "place"],
+  "tourist": ["attraction", "place"],
+  "sightseeing": ["attraction", "place"],
+  "park": ["park", "attraction"],
+  "parks": ["park", "attraction"]
+};
 
 function cleanValue(val) {
   if (typeof val !== "string") return val;
@@ -56,17 +114,38 @@ function rowToText(row, file) {
     parts.push("Category: Restaurant / Food Spot");
   } else if (lowerFile.includes("hotel")) {
     parts.push("Category: Hotel / Accommodation");
+  } else if (lowerFile.includes("hospital") || lowerFile.includes("medical")) {
+    parts.push("Category: Medical / Hospital");
+  } else if (lowerFile.includes("tourist") || lowerFile.includes("historical")) {
+    parts.push("Category: Tourist Attraction / Historical Place");
   }
 
   return parts.join("\n");
 }
 
 function tokenize(text) {
-  return text
+  const rawWords = text
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
     .filter((t) => t.length > 1 && !STOP_WORDS.has(t));
+
+  const expandedTokens = [];
+  for (const word of rawWords) {
+    expandedTokens.push(word);
+    // Add stemmed / synonym tokens if available
+    if (SYNONYM_MAP[word]) {
+      expandedTokens.push(...SYNONYM_MAP[word]);
+    } else if (word.endsWith("s") && word.length > 3) {
+      const singular = word.slice(0, -1);
+      expandedTokens.push(singular);
+      if (SYNONYM_MAP[singular]) {
+        expandedTokens.push(...SYNONYM_MAP[singular]);
+      }
+    }
+  }
+
+  return expandedTokens;
 }
 
 function buildTf(tokens) {
@@ -137,9 +216,6 @@ function loadExcelDocuments() {
 
   if (!fs.existsSync(dataDir) || files.length === 0) {
     console.error("❌ CRITICAL ERROR [RAG Service]: /data directory or valid dataset files (.csv, .xlsx, .xls) missing!");
-    console.error(`📍 Working Directory (process.cwd()): ${process.cwd()}`);
-    console.error(`📍 Service Directory (__dirname): ${__dirname}`);
-    console.error("📍 Searched Candidate Paths:", searchedPaths || [dataDir]);
     return { rawDocs: [], fileCount: 0, dataDir };
   }
 
@@ -169,7 +245,6 @@ function loadExcelDocuments() {
 
       for (const row of rows) {
         const content = rowToText(row, file);
-        // Skip incomplete or garbage rows where Name is just 'Lahore' or 'Murree'
         const lowerContent = content.toLowerCase();
         if (lowerContent.startsWith("name: lahore") && lowerContent.split("\n").length <= 3) {
           continue;
@@ -197,10 +272,6 @@ function loadExcelDocuments() {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/**
- * Build the in-memory TF-IDF index (called once at startup).
- * Safe to call multiple times — subsequent calls return existing status.
- */
 async function initVectorStore() {
   if (_docs) {
     return { success: true, count: _docs.length, fileCount: 0, alreadyInitialized: true };
@@ -211,12 +282,11 @@ async function initVectorStore() {
   const { rawDocs, fileCount, dataDir } = loadExcelDocuments();
 
   if (rawDocs.length === 0) {
-    const errorMsg = `❌ RAG Initialization Failed: No valid dataset files (.csv, .xlsx, .xls) found or parsed in data directory (${dataDir}).`;
+    const errorMsg = `❌ RAG Initialization Failed: No valid dataset files found in (${dataDir}).`;
     console.error(errorMsg);
     throw new Error(errorMsg);
   }
 
-  // Tokenise every document
   _docs = rawDocs.map((doc) => ({
     text: doc.text,
     file: doc.file,
@@ -226,7 +296,6 @@ async function initVectorStore() {
     tokens: buildTf(tokenize(doc.text)),
   }));
 
-  // Compute IDF across the corpus
   const df  = new Map();
   const N   = _docs.length;
   for (const doc of _docs) {
@@ -239,82 +308,110 @@ async function initVectorStore() {
     _idf.set(term, Math.log((N + 1) / (freq + 1)) + 1);
   }
 
-  const logMessage = `✅ Keyword index ready — ${_docs.length} document chunks indexed from ${fileCount} data files.`;
-  console.log(logMessage);
+  console.log(`✅ Keyword index ready — ${_docs.length} document chunks indexed from ${fileCount} data files.`);
   return { success: true, count: _docs.length, fileCount, dataDir };
 }
 
 /**
  * Retrieve the top-k most relevant document chunks for a query.
- * Returns a single string (chunks joined by separators).
  */
-async function retrieveExcelContext(query, k = 10) {
-  // Lazy init in case initVectorStore wasn't called at startup
+async function retrieveExcelContext(query, k = 10, historyContext = "") {
   if (!_docs) await initVectorStore();
 
-  const qLower = query.toLowerCase();
-  const qTokens = buildTf(tokenize(query));
+  const combinedQuery = `${historyContext} ${query}`.trim();
+  const qLower = combinedQuery.toLowerCase();
+  const qTokens = buildTf(tokenize(combinedQuery));
 
   const isQueryMurree = qLower.includes("murree");
   const isQueryLahore = qLower.includes("lahore");
 
-  const isFoodQuery = /\b(restaurant|restaurants|food|eat|eating|dining|cafe|cafes|dhaba|dhabas|karahi|bbq|dish|dishes|cuisine|spot|spots|eatery|eateries)\b/i.test(query);
-  const isHotelQuery = /\b(hotel|hotels|stay|staying|accommodation|lodge|lodging|resort|resorts|motel|motels|guest|guesthouse|guesthouses|inn|inns)\b/i.test(query);
-  const isHospitalQuery = /\b(hospital|hospitals|medical|doctor|doctors|clinic|emergency|health)\b/i.test(query);
-  const isAttractionQuery = /\b(place|places|spot|spots|visit|visiting|attraction|attractions|tourist|sightseeing|monument|fort|park)\b/i.test(query);
+  const isFoodQuery = /\b(restaurant|restaurants|resturant|resturants|food|eat|eating|dining|cafe|cafes|dhaba|dhabas|karahi|bbq|dish|dishes|cuisine|spot|spots|eatery|eateries)\b/i.test(qLower);
+  const isHotelQuery = /\b(hotel|hotels|hostel|hostels|stay|staying|accommodation|lodge|lodging|resort|resorts|motel|motels|guest|guesthouse|guesthouses|inn|inns)\b/i.test(qLower);
+  const isHospitalQuery = /\b(hospital|hospitals|medical|doctor|doctors|clinic|clinics|emergency|health)\b/i.test(qLower);
+  const isAttractionQuery = /\b(place|places|spot|spots|visit|visiting|attraction|attractions|tourist|sightseeing|monument|fort|park)\b/i.test(qLower);
 
   const scored = _docs.map((doc) => {
     let score = cosineSim(qTokens, doc.tokens, _idf);
 
-    // City relevance boost & strong cross-city penalty
+    // City relevance boost
     if (isQueryMurree) {
-      if (doc.city === "murree") score *= 3.0;
-      else if (doc.city === "lahore") score *= 0.01;
+      if (doc.city === "murree") score *= 4.0;
+      else if (doc.city === "lahore") score *= 0.05;
     } else if (isQueryLahore) {
-      if (doc.city === "lahore") score *= 3.0;
-      else if (doc.city === "murree") score *= 0.01;
+      if (doc.city === "lahore") score *= 4.0;
+      else if (doc.city === "murree") score *= 0.05;
     }
 
-    // Entity dataset boost over FAQ datasets
+    // Category boost over FAQ datasets
     if (isFoodQuery) {
-      if (doc.fileCategory === "food") score *= 8.0;
-      if (doc.isFaq) score *= 0.1;
+      if (doc.fileCategory === "food") score *= 10.0;
+      if (doc.isFaq) score *= 0.2;
     }
     if (isHotelQuery) {
-      if (doc.fileCategory === "hotel") score *= 8.0;
-      if (doc.isFaq) score *= 0.1;
+      if (doc.fileCategory === "hotel") score *= 10.0;
+      if (doc.isFaq) score *= 0.2;
     }
     if (isHospitalQuery) {
-      if (doc.fileCategory === "medical") score *= 8.0;
-      if (doc.isFaq) score *= 0.1;
+      if (doc.fileCategory === "medical") score *= 10.0;
+      if (doc.isFaq) score *= 0.2;
     }
     if (isAttractionQuery) {
-      if (doc.fileCategory === "attraction") score *= 8.0;
-      if (doc.isFaq) score *= 0.1;
+      if (doc.fileCategory === "attraction") score *= 10.0;
+      if (doc.isFaq) score *= 0.2;
     }
 
     return {
       text: doc.text,
       score,
+      fileCategory: doc.fileCategory,
+      city: doc.city,
+      isFaq: doc.isFaq
     };
   });
 
   scored.sort((a, b) => b.score - a.score);
 
-  // Deduplicate results
+  // Fallback Intent Retrieval: If top scores are weak or 0, fallback to direct category matches
+  const topResults = [];
   const seenTexts = new Set();
-  const uniqueResults = [];
 
   for (const r of scored) {
-    const cleanSnippet = r.text.toLowerCase().replace(/\s+/g, " ").substring(0, 60);
-    if (!seenTexts.has(cleanSnippet)) {
-      seenTexts.add(cleanSnippet);
-      uniqueResults.push(r.text);
+    if (r.score > 0.001) {
+      const cleanSnippet = r.text.toLowerCase().replace(/\s+/g, " ").substring(0, 60);
+      if (!seenTexts.has(cleanSnippet)) {
+        seenTexts.add(cleanSnippet);
+        topResults.push(r.text);
+      }
     }
-    if (uniqueResults.length >= k) break;
+    if (topResults.length >= k) break;
   }
 
-  return uniqueResults.join("\n\n---\n\n");
+  // If topResults is still under k, backfill with high-quality category items
+  if (topResults.length < 5) {
+    let targetCategory = null;
+    if (isFoodQuery) targetCategory = "food";
+    else if (isHotelQuery) targetCategory = "hotel";
+    else if (isHospitalQuery) targetCategory = "medical";
+    else if (isAttractionQuery) targetCategory = "attraction";
+
+    const candidateDocs = _docs.filter((d) => {
+      if (targetCategory && d.fileCategory !== targetCategory) return false;
+      if (isQueryMurree && d.city === "lahore") return false;
+      if (isQueryLahore && d.city === "murree") return false;
+      return !d.isFaq;
+    });
+
+    for (const d of candidateDocs) {
+      const cleanSnippet = d.text.toLowerCase().replace(/\s+/g, " ").substring(0, 60);
+      if (!seenTexts.has(cleanSnippet)) {
+        seenTexts.add(cleanSnippet);
+        topResults.push(d.text);
+      }
+      if (topResults.length >= k) break;
+    }
+  }
+
+  return topResults.slice(0, k).join("\n\n---\n\n");
 }
 
 module.exports = { initVectorStore, retrieveExcelContext };
